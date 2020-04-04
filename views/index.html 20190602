@@ -1,0 +1,832 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Minecraft world by A-Frame</title>
+<script src="https://aframe.io/releases/0.9.0/aframe.min.js"></script>
+<!--
+  <script src="//cdn.rawgit.com/donmccurdy/aframe-extras/v4.1.2/dist/aframe-extras.min.js"></script>
+-->
+<script src="//cdn.rawgit.com/donmccurdy/aframe-extras/v6.0.0/dist/aframe-extras.min.js"></script>
+<script src="https://code.jquery.com/jquery-3.3.1.min.js"></script>
+<script src="/socket.io/socket.io.js"></script>
+<script src="https://rawgit.com/fernandojsg/aframe-teleport-controls/master/dist/aframe-teleport-controls.min.js"></script>
+<script>
+
+  
+function generateUuid() {
+  // https://github.com/GoogleChrome/chrome-platform-analytics/blob/master/src/internal/identifier.js
+  // const FORMAT: string = "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx";
+  let chars = "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".split("");
+  for (let i = 0, len = chars.length; i < len; i++) {
+    switch (chars[i]) {
+      case "x":
+        chars[i] = Math.floor(Math.random() * 16).toString(16);
+        break;
+      case "y":
+        chars[i] = (Math.floor(Math.random() * 4) + 8).toString(16);
+        break;
+    }
+  }
+  return chars.join("");
+}
+
+// 全体を統括するための情報をここにまとめる
+function BlockInfo() {
+  let instance = this;
+  
+  this.marker = "";
+  this.block = "";
+  this.pos = "";
+  this.userid = "";
+
+  // set userid
+  if (document.cookie.indexOf("userid") !== -1) {
+    let cookies = document.cookie.split(";");
+    console.log(cookies);
+    for (i = 0; i < cookies.length; i++) {
+      if (cookies[i].split("=")[0] === 'userid') {
+        console.log(cookies[i]);
+        this.userid = decodeURIComponent(cookies[i].split("=")[1]);
+        console.log(this.userid);
+        return;
+      }
+    }
+  } else {
+    this.userid = generateUuid();
+    document.cookie = "userid=" + encodeURIComponent(this.userid)
+  }
+
+  BlockInfo = function() {
+    return this.instance;
+  };
+}
+  
+var blockdata = new BlockInfo();
+
+AFRAME.registerComponent('touch-listener', {
+  init: function () {
+    var targetEl = this.el;
+    var blockList = document.querySelector('#blockList');
+
+    targetEl.addEventListener('triggerdown', (e) => {
+      console.log("triggerdown");
+      targetEl.emit('starttouch');      
+    });        
+
+    targetEl.addEventListener('triggerup', (e) => {
+      console.log("triggerup");
+      targetEl.emit('endtouch');      
+    });
+    
+    targetEl.addEventListener('abuttondown', (e) => {
+      console.log('abuttondown');
+      blockdata.marker.setAttribute('visible', true);
+    });
+
+    targetEl.addEventListener('abuttonup', (e) => {
+      console.log('abuttonup');
+      makeBlock();
+      blockdata.marker.setAttribute('visible', false);
+    });
+    
+    targetEl.addEventListener('xbuttondown', (e) => {
+      console.log('xbuttondown');
+      blockdata.marker.setAttribute('visible', true);
+    });
+    
+    targetEl.addEventListener('xbuttonup', (e) => {
+      console.log('xbuttonup');
+      makeBlock();
+      blockdata.marker.setAttribute('visible', false);
+    });
+
+    targetEl.addEventListener('bbuttondown', (e) => {
+      console.log('bbuttondown');
+    });
+
+    targetEl.addEventListener('bbuttonup', (e) => {
+      console.log('bbuttonup');
+      deleteBlock();
+    });
+    
+    targetEl.addEventListener('ybuttondown', (e) => {
+      console.log('ybuttondown');
+    });
+
+    targetEl.addEventListener('ybuttonup', (e) => {
+      console.log('ybuttonup');
+      deleteBlock();
+    });
+    
+    
+    function makeBlock() {
+      if (blockdata.pos) {
+        let box = document.createElement("a-box");
+        box.id = generateUuid();
+        box.className = "block ground";
+        box.setAttribute("mixin", "cobblestone");
+        box.setAttribute("position", blockdata.pos);
+
+        blockList.appendChild(box);
+        
+        sendCreateblock(box);
+      }
+    }
+
+    function sendCreateblock(blockobj) {
+      let socketdata = {};
+      socketdata["datetime"] = new Date();
+      socketdata["userUuid"] = blockdata.userid;
+      socketdata["blockUuid"] = blockobj.id;
+      socketdata["method"] = "create";
+      let block = {
+        "class": blockobj.getAttribute("class"),
+        "mixin": blockobj.getAttribute("mixin"),
+        "position": blockdata.pos
+      };
+      socketdata["block"] = block;
+      ws.emit("makeblock", JSON.stringify(socketdata));
+
+    }
+    
+    function deleteBlock() {
+      if (blockdata.block) {
+        sendDeleteBlock()
+        blockdata.block.parentNode.removeChild(blockdata.block);
+      }
+    }
+
+    function sendDeleteBlock() {
+      let socketdata = {};
+      socketdata["datetime"] = new Date();
+      socketdata["userUuid"] = blockdata.userid;
+      socketdata["blockUuid"] = blockdata.block.getAttribute("id");
+      socketdata["method"] = "delete";
+      ws.emit("makeblock", JSON.stringify(socketdata));
+    }
+    
+  }
+});
+
+// Component
+AFRAME.registerComponent('collider-check', {
+  dependencies: ['raycaster'],
+
+  init: function () {
+
+    var el = this.el;
+
+    const scene = this.el.sceneEl
+
+    var blockList = document.createElement("a-entity");
+    blockList.id = "blockList";
+    scene.appendChild(blockList);
+
+    console.log("init end");
+    
+  },
+
+  // main loop
+  tick: function (time, timeDelta) {
+    let el = this.el;
+
+    el.components.raycaster.refreshObjects();
+    let intersection = getNearestIntersection(el.components.raycaster.intersections);
+    if (intersection) {
+      
+      let pos = intersection.point;
+      if (intersection.object.el.classList.contains('block')) {
+        blockdata.block = intersection.object.el;
+      } else {
+        blockdata.block = '';
+      }
+      pos.x = Math.round(pos.x);
+      pos.y = Math.round(pos.y <= 0 ? 0 : pos.y);
+      pos.z = Math.round(pos.z);
+      if (blockdata.marker) {
+        blockdata.marker.setAttribute("position", pos);
+      }
+      blockdata.pos = pos;
+    } else {
+      blockdata.pos = "";
+      blockdata.block = "";
+    }
+
+    // get target intersection
+    function getNearestIntersection(intersections) {
+      for (var i = 0, l = intersections.length; i < l; i++) {
+          // ignore cursor itself to avoid flicker && ignore "ignore-ray" class
+          if (blockdata.target === intersections[i].object.el || intersections[i].object.el.classList.contains("ignore-ray")) { continue; }
+          return intersections[i];
+      }
+      return null;
+    }
+
+  }
+});
+
+</script>
+</head>
+<body>  
+    
+<a-scene fog="type: linear; color: #90b7ee; far: 220; near: 0;" physics>
+ <a-assets>
+  <a-mixin id="box" geometry="primitive: box; depth: 2; height: 2; width: 2" material="shader: standard"></a-mixin>
+  <a-mixin id="log" geometry="primitive: box; depth: 2; height: 2; width: 2" material="shader: standard; src: url(https://cdn.glitch.com/85e614c3-8c59-4940-a1cf-44d38e346d3f%2Fwood-log.png?1527599185878);"></a-mixin>
+  <a-mixin id="leaves" geometry="primitive: box; depth: 2; height: 2; width: 2" material="shader: standard; src: url(https://cdn.glitch.com/85e614c3-8c59-4940-a1cf-44d38e346d3f%2Fleaves.png?1527599184998);"></a-mixin>
+  <a-mixin id="sand" geometry="primitive: box; depth: 2; height: 2; width: 2" material="shader: standard; src: url(https://cdn.glitch.com/85e614c3-8c59-4940-a1cf-44d38e346d3f%2Fsand.png?1527599189486);"></a-mixin>
+  <a-mixin id="cobblestone" geometry="primitive: box; depth: 1.01; height: 1.01; width: 1.01" material="shader: standard; src: url(https://cdn.glitch.com/85e614c3-8c59-4940-a1cf-44d38e346d3f%2Fcobblestone.png?1527599132795);"></a-mixin>
+  <a-mixin id="plank" geometry="primitive: box; depth: 2; height: 2; width: 2" material="shader: standard; src: url(https://cdn.glitch.com/85e614c3-8c59-4940-a1cf-44d38e346d3f%2Fwooden-plank.png?1527599185217);"></a-mixin>
+  <a-mixin id="post" geometry="primitive: box; depth: 0.5; height: 2; width: 0.5" material="shader: standard; src: url(https://cdn.glitch.com/85e614c3-8c59-4940-a1cf-44d38e346d3f%2Ffence-post.png?1527599184698)"></a-mixin>
+ </a-assets>
+
+ <a-entity id="rig" movement-controls>
+    <a-entity camera id="camera" look-controls="pointerLockEnabled:false;" position="0 1.6 0">
+      <a-cursor id="target" raycaster="objects: .collidable, .block, .floor" collider-check></a-cursor>
+   </a-entity>
+    <a-entity id="left-hand" oculus-touch-controls="hand: left"
+              touch-listener
+              teleport-controls=
+              "cameraRig: #rig;
+               teleportOrigin: #camera;
+               startEvents:starttouch;
+               endEvents:endtouch;
+               curveShootingSpeed:15;
+               hitCylinderRadius:1;
+               collisionEntities:.ground">
+      </a-entity>
+    <a-entity id="right-hand" oculus-touch-controls="hand: right"
+              touch-listener
+              teleport-controls=
+              "cameraRig: #rig;
+               teleportOrigin: #camera;
+               startEvents:starttouch;
+               endEvents:endtouch;
+               curveShootingSpeed:15;
+               hitCylinderRadius:1;
+               collisionEntities:.ground">
+    </a-entity>
+  </a-entity>
+  <a-box id="marker" class="non-collidable" color="white" position="0 999 0" wireframe="true" opacity="0.5" visible="false"></a-box>
+  
+<!-- Sun -->
+<a-entity geometry=" primitive: plane; height: 9; width: 9" position="20 55 -50" material="shader: standard; transparent: true; side: double; true; src: url(https://cdn.glitch.com/85e614c3-8c59-4940-a1cf-44d38e346d3f%2Fsun.png?1527599190384)">
+ <a-animation attribute="position" from="20 20 -40" to="20 20 220" easing="linear" begin="200" dur="2000000"></a-animation>
+</a-entity>
+  
+<!-- Clouds -->
+<a-entity geometry="primitive: box; depth: 3; height: 1; width: 2" position="-25 20 10" material="shader: standard; opacity: 0.8; color: #fff">
+  <a-animation attribute="position" from="-25 20 10" to="20 10 230" easing="linear" begin="200" dur="1000000"></a-animation></a-entity>
+
+<a-entity geometry="primitive: box; depth: 5; height: 1; width: 2" position="-40 20 -30" material="shader: standard; opacity: 0.8; color: #fff">
+  <a-animation attribute="position" from="-40 20 -30" to="-40 10 210" easing="linear" begin="200" dur="1000000"></a-animation></a-entity>
+
+<a-entity geometry="primitive: box; depth: 3; height: 1; width: 2" position="-10 20 -50" material="shader: standard; opacity: 0.8; color: #fff"> 
+ <a-animation attribute="position" from="-10 20 -50" to="-10 10 190" easing="linear" begin="200" dur="1000000"></a-animation></a-entity>
+
+<a-entity geometry="primitive: box; depth: 5; height: 1; width: 2" position="-20 20 -35" material="shader: standard; opacity: 0.8; color: #fff"> 
+ <a-animation attribute="position" from="-20 20 -35" to="-20 10 205" easing="linear" begin="200" dur="1000000"></a-animation></a-entity>
+
+<a-entity geometry="primitive: box; depth: 5; height: 1; width: 2" position="-10 20 -20" material="shader: standard; opacity: 0.8; color: #fff"> 
+ <a-animation attribute="position" from="-10 20 -20" to="-10 10 220" easing="linear" begin="200" dur="1000000"></a-animation></a-entity>
+
+<a-entity geometry="primitive: box; depth: 3; height: 1; width: 2" position="-12 20 -20" material="shader: standard; opacity: 0.8; color: #fff"> 
+ <a-animation attribute="position" from="-12 20 -20" to="-12 10 220" easing="linear" begin="200" dur="1000000"></a-animation></a-entity>
+
+<a-entity geometry="primitive: box; depth: 5; height: 1; width: 2" position="0 20 -10" material="shader: standard; opacity: 0.8; color: #fff"> 
+ <a-animation attribute="position" from="0 20 -10" to="0 10 230" easing="linear" begin="200" dur="1000000"></a-animation></a-entity>
+
+<a-entity geometry="primitive: box; depth: 2; height: 1; width: 2" position="-28 20 -10" material="shader: standard; opacity: 0.8; color: #fff"> 
+ <a-animation attribute="position" from="-28 20 -10" to="-28 10 240" easing="linear" begin="200" dur="1000000"></a-animation></a-entity>        
+
+<!-- Front Wall-->
+<a-entity mixin="plank" position="0 0.5 -12"></a-entity>
+<a-entity mixin="plank" position="2 0.5 -12"></a-entity>
+<a-entity mixin="plank" position="4 0.5 -12"></a-entity>
+<a-entity mixin="plank" position="6 0.5 -12"></a-entity>
+<a-entity mixin="plank" position="8 0.5 -12"></a-entity>
+<a-entity mixin="plank" position="10 0.5 -12"></a-entity>
+<a-entity mixin="plank" position="10 0.5 -14"></a-entity>
+<a-entity mixin="plank" position="-2 0.5 -12"></a-entity>
+<a-entity mixin="plank" position="-6 0.5 -12"></a-entity>
+<a-entity mixin="plank" position="-8 0.5 -12"></a-entity>
+<a-entity mixin="plank" position="-10 0.5 -12"></a-entity>
+<!-- Right Wall-->
+<a-entity mixin="plank" position="10 0.5 -14"></a-entity>
+<a-entity mixin="plank" position="10 0.5 -16"></a-entity>
+<a-entity mixin="plank" position="10 0.5 -18"></a-entity>
+<a-entity mixin="plank" position="10 0.5 -20"></a-entity>
+<a-entity mixin="plank" position="10 0.5 -22"></a-entity>
+<!-- Left Wall-->
+<a-entity mixin="plank" position="-10 0.5 -14"></a-entity>
+<a-entity mixin="plank" position="-10 0.5 -16"></a-entity>
+<a-entity mixin="plank" position="-10 0.5 -18"></a-entity>
+<a-entity mixin="plank" position="-10 0.5 -20"></a-entity>
+<a-entity mixin="plank" position="-10 0.5 -22"></a-entity>
+<!-- Back Wall-->
+<a-entity mixin="plank" position="-8 0.5 -22"></a-entity>
+<a-entity mixin="plank" position="-6 0.5 -22"></a-entity>
+<a-entity mixin="plank" position="-4 0.5 -22"></a-entity>
+<a-entity mixin="plank" position="-2 0.5 -22"></a-entity>
+<a-entity mixin="plank" position="0 0.5 -22"></a-entity>
+<a-entity mixin="plank" position="2 0.5 -22"></a-entity>
+<a-entity mixin="plank" position="4 0.5 -22"></a-entity>
+<a-entity mixin="plank" position="6 0.5 -22"></a-entity>
+<a-entity mixin="plank" position="8 0.5 -22"></a-entity>
+<!-- Inside Wall-->
+<a-entity mixin="plank" position="2 0.5 -20"></a-entity>
+<a-entity mixin="plank" position="2 0.5 -18"></a-entity>
+<a-entity mixin="plank" position="2 0.5 -14"></a-entity>
+<!-- Front Wall 2-->
+<a-entity mixin="plank" position="0 2.5 -12"></a-entity>
+<a-entity mixin="plank" position="2 2.5 -12"></a-entity>
+<a-entity mixin="plank" position="4 2.5 -12"></a-entity>
+<a-entity mixin="plank" position="8 2.5 -12"></a-entity>
+<a-entity mixin="plank" position="10 2.5 -12"></a-entity>
+<a-entity mixin="plank" position="10 2.5 -14"></a-entity>
+<a-entity mixin="plank" position="-2 2.5 -12"></a-entity>
+<a-entity mixin="plank" position="-6 2.5 -12"></a-entity>
+<a-entity mixin="plank" position="-8 2.5 -12"></a-entity>
+<a-entity mixin="plank" position="-10 2.5 -12"></a-entity>
+<!-- Right Wall 2-->
+<a-entity mixin="plank" position="10 2.5 -14"></a-entity>
+<a-entity mixin="plank" position="10 2.5 -20"></a-entity>
+<a-entity mixin="plank" position="10 2.5 -22"></a-entity>
+<!-- Left Wall 2-->
+<a-entity mixin="plank" position="-10 2.5 -14"></a-entity>
+<a-entity mixin="plank" position="-10 2.5 -20"></a-entity>
+<a-entity mixin="plank" position="-10 2.5 -22"></a-entity>
+<!-- Back Wall 2-->
+<a-entity mixin="plank" position="-8 2.5 -22"></a-entity>
+<a-entity mixin="plank" position="-6 2.5 -22"></a-entity>
+<a-entity mixin="plank" position="-2 2.5 -22"></a-entity>
+<a-entity mixin="plank" position="0 2.5 -22"></a-entity>
+<a-entity mixin="plank" position="2 2.5 -22"></a-entity>
+<a-entity mixin="plank" position="4 2.5 -22"></a-entity>
+<a-entity mixin="plank" position="8 2.5 -22"></a-entity>
+<!-- Inside Wall 2-->
+<a-entity mixin="plank" position="2 2.5 -20"></a-entity>
+<a-entity mixin="plank" position="2 2.5 -18"></a-entity>
+<a-entity mixin="plank" position="2 2.5 -14"></a-entity>
+<!-- Front Wall 3-->
+<a-entity mixin="plank" position="0 4.5 -12"></a-entity>
+<a-entity mixin="plank" position="2 4.5 -12"></a-entity>
+<a-entity mixin="plank" position="4 4.5 -12"></a-entity>
+<a-entity mixin="plank" position="6 4.5 -12"></a-entity>
+<a-entity mixin="plank" position="8 4.5 -12"></a-entity>
+<a-entity mixin="plank" position="10 4.5 -12"></a-entity>
+<a-entity mixin="plank" position="10 4.5 -12"></a-entity>
+<a-entity mixin="plank" position="-2 4.5 -12"></a-entity>
+<a-entity mixin="plank" position="-6 4.5 -12"></a-entity>
+
+<a-entity mixin="plank" position="-2 4.5 -10"></a-entity>
+<a-entity mixin="plank" position="-4 4.5 -10"></a-entity>
+<a-entity mixin="plank" position="-6 4.5 -10"></a-entity>
+
+<a-entity mixin="plank" position="-8 4.5 -12"></a-entity>
+<a-entity mixin="plank" position="-10 4.5 -12"></a-entity>
+<!-- Right Wall 3-->
+<a-entity mixin="plank" position="10 4.5 -14"></a-entity>
+<a-entity mixin="plank" position="10 4.5 -16"></a-entity>
+<a-entity mixin="plank" position="10 4.5 -18"></a-entity>
+<a-entity mixin="plank" position="10 4.5 -20"></a-entity>
+<a-entity mixin="plank" position="10 4.5 -22"></a-entity>
+<!-- Left Wall 3-->
+<a-entity mixin="plank" position="-10 4.5 -14"></a-entity>
+<a-entity mixin="plank" position="-10 4.5 -16"></a-entity>
+<a-entity mixin="plank" position="-10 4.5 -18"></a-entity>
+<a-entity mixin="plank" position="-10 4.5 -20"></a-entity>
+<a-entity mixin="plank" position="-10 4.5 -22"></a-entity>
+<!-- Back Wall 3-->
+<a-entity mixin="plank" position="-8 4.5 -22"></a-entity>
+<a-entity mixin="plank" position="-6 4.5 -22"></a-entity>
+<a-entity mixin="plank" position="-4 4.5 -22"></a-entity>
+<a-entity mixin="plank" position="-2 4.5 -22"></a-entity>
+<a-entity mixin="plank" position="0 4.5 -22"></a-entity>
+<a-entity mixin="plank" position="2 4.5 -22"></a-entity>
+<a-entity mixin="plank" position="4 4.5 -22"></a-entity>
+<a-entity mixin="plank" position="6 4.5 -22"></a-entity>
+<a-entity mixin="plank" position="8 4.5 -22"></a-entity>
+<!-- Inside Wall 3-->
+<a-entity mixin="plank" position="2 4.5 -20"></a-entity>
+<a-entity mixin="plank" position="2 4.5 -18"></a-entity>
+<a-entity mixin="plank" position="2 4.5 -14"></a-entity>
+<!-- Roof-->
+<a-entity mixin="plank" position="-8 4.5 -20"></a-entity>
+<a-entity mixin="plank" position="-6 4.5 -20"></a-entity>
+<a-entity mixin="plank" position="-4 4.5 -20"></a-entity>
+<a-entity mixin="plank" position="-2 4.5 -20"></a-entity>
+<a-entity mixin="plank" position="0 4.5 -20"></a-entity>
+<a-entity mixin="plank" position="4 4.5 -20"></a-entity>
+<a-entity mixin="plank" position="6 4.5 -20"></a-entity>
+<a-entity mixin="plank" position="8 4.5 -20"></a-entity>
+<a-entity mixin="plank" position="10 4.5 -20"></a-entity>
+
+<a-entity mixin="plank" position="-8 4.5 -18"></a-entity>
+<a-entity mixin="plank" position="-6 4.5 -18"></a-entity>
+<a-entity mixin="plank" position="-4 4.5 -18"></a-entity>
+<a-entity mixin="plank" position="-2 4.5 -18"></a-entity>
+<a-entity mixin="plank" position="0 4.5 -18"></a-entity>
+<a-entity mixin="plank" position="4 4.5 -18"></a-entity>
+<a-entity mixin="plank" position="6 4.5 -18"></a-entity>
+<a-entity mixin="plank" position="8 4.5 -18"></a-entity>
+<a-entity mixin="plank" position="10 4.5 -18"></a-entity>
+
+<a-entity mixin="plank" position="-8 4.5 -16"></a-entity>
+<a-entity mixin="plank" position="-6 4.5 -16"></a-entity>
+<a-entity mixin="plank" position="-4 4.5 -16"></a-entity>
+<a-entity mixin="plank" position="-2 4.5 -16"></a-entity>
+<a-entity mixin="plank" position="0 4.5 -16"></a-entity>
+<a-entity mixin="plank" position="2 4.5 -16"></a-entity>
+<a-entity mixin="plank" position="4 4.5 -16"></a-entity>
+<a-entity mixin="plank" position="6 4.5 -16"></a-entity>
+<a-entity mixin="plank" position="8 4.5 -16"></a-entity>
+<a-entity mixin="plank" position="10 4.5 -16"></a-entity>
+
+<a-entity mixin="plank" position="-8 4.5 -14"></a-entity>
+<a-entity mixin="plank" position="-6 4.5 -14"></a-entity>
+<a-entity mixin="plank" position="-4 4.5 -14"></a-entity>
+<a-entity mixin="plank" position="-2 4.5 -14"></a-entity>
+<a-entity mixin="plank" position="0 4.5 -14"></a-entity>
+<a-entity mixin="plank" position="2 4.5 -14"></a-entity>
+<a-entity mixin="plank" position="4 4.5 -14"></a-entity>
+<a-entity mixin="plank" position="6 4.5 -14"></a-entity>
+<a-entity mixin="plank" position="8 4.5 -14"></a-entity>
+<a-entity mixin="plank" position="10 4.5 -14"></a-entity>
+<a-entity mixin="plank" position="-4 4.5 -12"></a-entity>
+
+<!-- Right Trees -->
+<a-entity mixin="leaves" position="20 8.5 -4"></a-entity>
+<a-entity mixin="leaves" position="20 6.5 -2"></a-entity>
+<a-entity mixin="leaves" position="20 6.5 -6"></a-entity>
+<a-entity mixin="leaves" position="18 6.5 -4"></a-entity>
+<a-entity mixin="leaves" position="22 6.5 -4"></a-entity>
+<a-entity mixin="leaves" position="16 4.5 -4"></a-entity>
+<a-entity mixin="leaves" position="18 4.5 -6"></a-entity>
+<a-entity mixin="leaves" position="20 4.5 0"></a-entity>
+<a-entity mixin="leaves" position="18 4.5 -2"></a-entity>
+<a-entity mixin="leaves" position="18 4.5 -4"></a-entity>
+<a-entity mixin="leaves" position="22 4.5 -4"></a-entity>
+<a-entity mixin="leaves" position="20 4.5 -6"></a-entity>
+<a-entity mixin="leaves" position="22 4.5 -2"></a-entity>
+<a-entity mixin="leaves" position="24 4.5 -4"></a-entity>
+<a-entity mixin="leaves" position="22 4.5 -6"></a-entity>
+<a-entity mixin="leaves" position="20 4.5 -8"></a-entity>
+<a-entity mixin="leaves" position="20 4.5 -2"></a-entity>
+<a-entity mixin="log" position="20 0.5 -4"></a-entity>
+<a-entity mixin="log" position="20 2.5 -4"></a-entity>
+<a-entity mixin="log" position="20 4.5 -4"></a-entity>
+
+<a-entity mixin="leaves" position="22 4.5 -18"></a-entity>
+<a-entity mixin="leaves" position="26 4.5 -18"></a-entity>
+<a-entity mixin="leaves" position="24 4.5 -20"></a-entity>
+<a-entity mixin="leaves" position="24 4.5 -16"></a-entity>
+<a-entity mixin="leaves" position="24 6.5 -18"></a-entity>
+<a-entity mixin="log" position="24 0.5 -18"></a-entity>
+<a-entity mixin="log" position="24 2.5 -18"></a-entity>
+<a-entity mixin="log" position="24 4.5 -18"></a-entity>
+
+<a-entity mixin="leaves" position="32 4.5 -10"></a-entity>
+<a-entity mixin="leaves" position="36 4.5 -10"></a-entity>
+<a-entity mixin="leaves" position="34 4.5 -12"></a-entity>
+<a-entity mixin="leaves" position="34 4.5 -8"></a-entity>
+<a-entity mixin="leaves" position="34 6.5 -10"></a-entity>
+<a-entity mixin="log" position="34 0.5 -10"></a-entity>
+<a-entity mixin="log" position="34 2.5 -10"></a-entity>
+<a-entity mixin="log" position="34 4.5 -10"></a-entity>
+
+<a-entity mixin="leaves" position="30 4.5 10"></a-entity>
+<a-entity mixin="leaves" position="34 4.5 10"></a-entity>
+<a-entity mixin="leaves" position="32 4.5 8"></a-entity>
+<a-entity mixin="leaves" position="32 4.5 12"></a-entity>
+<a-entity mixin="leaves" position="32 6.5 10"></a-entity>
+<a-entity mixin="log" position="32 0.5 10"></a-entity>
+<a-entity mixin="log" position="32 2.5 10"></a-entity>
+<a-entity mixin="log" position="32 4.5 10"></a-entity>
+
+<a-entity mixin="leaves" position="34 4.5 1"></a-entity>
+<a-entity mixin="leaves" position="38 4.5 1"></a-entity>
+<a-entity mixin="leaves" position="36 4.5 -1"></a-entity>
+<a-entity mixin="leaves" position="36 4.5 3"></a-entity>
+<a-entity mixin="leaves" position="36 6.5 1"></a-entity>
+<a-entity mixin="log" position="36 0.5 1"></a-entity>
+<a-entity mixin="log" position="36 2.5 1"></a-entity>
+<a-entity mixin="log" position="36 4.5 1"></a-entity>
+
+<!-- Left Trees -->
+<a-entity mixin="leaves" position="-20 8.5 -4"></a-entity>
+<a-entity mixin="leaves" position="-20 6.5 -2"></a-entity>
+<a-entity mixin="leaves" position="-20 6.5 -6"></a-entity>
+<a-entity mixin="leaves" position="-18 6.5 -4"></a-entity>
+<a-entity mixin="leaves" position="-22 6.5 -4"></a-entity>
+<a-entity mixin="leaves" position="-16 4.5 -4"></a-entity>
+<a-entity mixin="leaves" position="-18 4.5 -6"></a-entity>
+<a-entity mixin="leaves" position="-20 4.5 0"></a-entity>
+<a-entity mixin="leaves" position="-18 4.5 -2"></a-entity>
+<a-entity mixin="leaves" position="-18 4.5 -4"></a-entity>
+<a-entity mixin="leaves" position="-22 4.5 -4"></a-entity>
+<a-entity mixin="leaves" position="-20 4.5 -6"></a-entity>
+<a-entity mixin="leaves" position="-22 4.5 -2"></a-entity>
+<a-entity mixin="leaves" position="-24 4.5 -4"></a-entity>
+<a-entity mixin="leaves" position="-22 4.5 -6"></a-entity>
+<a-entity mixin="leaves" position="-20 4.5 -8"></a-entity>
+<a-entity mixin="leaves" position="-20 4.5 -2"></a-entity>
+<a-entity mixin="log" position="-20 0.5 -4"></a-entity>
+<a-entity mixin="log" position="-20 2.5 -4"></a-entity>
+<a-entity mixin="log" position="-20 4.5 -4"></a-entity>
+
+<a-entity mixin="leaves" position="-22 4.5 -18"></a-entity>
+<a-entity mixin="leaves" position="-26 4.5 -18"></a-entity>
+<a-entity mixin="leaves" position="-24 4.5 -20"></a-entity>
+<a-entity mixin="leaves" position="-24 4.5 -16"></a-entity>
+<a-entity mixin="leaves" position="-24 6.5 -18"></a-entity>
+<a-entity mixin="log" position="-24 0.5 -18"></a-entity>
+<a-entity mixin="log" position="-24 2.5 -18"></a-entity>
+<a-entity mixin="log" position="-24 4.5 -18"></a-entity>
+
+<a-entity mixin="leaves" position="-32 4.5 -10"></a-entity>
+<a-entity mixin="leaves" position="-36 4.5 -10"></a-entity>
+<a-entity mixin="leaves" position="-34 4.5 -12"></a-entity>
+<a-entity mixin="leaves" position="-34 4.5 -8"></a-entity>
+<a-entity mixin="leaves" position="-34 6.5 -10"></a-entity>
+<a-entity mixin="log" position="-34 0.5 -10"></a-entity>
+<a-entity mixin="log" position="-34 2.5 -10"></a-entity>
+<a-entity mixin="log" position="-34 4.5 -10"></a-entity>
+
+<a-entity mixin="leaves" position="-30 4.5 10"></a-entity>
+<a-entity mixin="leaves" position="-34 4.5 10"></a-entity>
+<a-entity mixin="leaves" position="-32 4.5 8"></a-entity>
+<a-entity mixin="leaves" position="-32 4.5 12"></a-entity>
+<a-entity mixin="leaves" position="-32 6.5 10"></a-entity>
+<a-entity mixin="log" position="-32 0.5 10"></a-entity>
+<a-entity mixin="log" position="-32 2.5 10"></a-entity>
+<a-entity mixin="log" position="-32 4.5 10"></a-entity>
+
+<a-entity mixin="leaves" position="-34 4.5 1"></a-entity>
+<a-entity mixin="leaves" position="-38 4.5 1"></a-entity>
+<a-entity mixin="leaves" position="-36 4.5 -1"></a-entity>
+<a-entity mixin="leaves" position="-36 4.5 3"></a-entity>
+<a-entity mixin="leaves" position="-36 6.5 1"></a-entity>
+<a-entity mixin="log" position="-36 0.5 1"></a-entity>
+<a-entity mixin="log" position="-36 2.5 1"></a-entity>
+<a-entity mixin="log" position="-36 4.5 1"></a-entity>
+
+<!-- Cobblestone Monument -->
+<a-entity mixin="cobblestone" position="12 0.5 54"></a-entity>
+<a-entity mixin="cobblestone" position="12 2.5 54"></a-entity>
+<a-entity mixin="cobblestone" position="12 4.5 54"></a-entity>
+<a-entity mixin="cobblestone" position="8 0.5 54"></a-entity>
+<a-entity mixin="cobblestone" position="8 2.5 54"></a-entity>
+<a-entity mixin="cobblestone" position="8 4.5 54"></a-entity>
+<a-entity mixin="cobblestone" position="4 0.5 54"></a-entity>
+<a-entity mixin="cobblestone" position="4 2.5 54"></a-entity>
+<a-entity mixin="cobblestone" position="4 4.5 54"></a-entity>
+<a-entity mixin="cobblestone" position="0 0.5 54"></a-entity>
+<a-entity mixin="cobblestone" position="0 2.5 54"></a-entity>
+<a-entity mixin="cobblestone" position="0 4.5 54"></a-entity>
+<a-entity mixin="cobblestone" position="-4 0.5 54"></a-entity>
+<a-entity mixin="cobblestone" position="-4 2.5 54"></a-entity>
+<a-entity mixin="cobblestone" position="-4 4.5 54"></a-entity>
+<a-entity mixin="cobblestone" position="-8 0.5 54"></a-entity>
+<a-entity mixin="cobblestone" position="-8 2.5 54"></a-entity>
+<a-entity mixin="cobblestone" position="-8 4.5 54"></a-entity>
+<a-entity mixin="cobblestone" position="-12 0.5 54"></a-entity>
+<a-entity mixin="cobblestone" position="-12 2.5 54"></a-entity>
+<a-entity mixin="cobblestone" position="-12 4.5 54"></a-entity>
+<a-entity mixin="cobblestone" position="-16 0.5 54"></a-entity>
+<a-entity mixin="cobblestone" position="-16 2.5 54"></a-entity>
+<a-entity mixin="cobblestone" position="-16 4.5 54"></a-entity>
+
+<a-entity mixin="cobblestone" position="-16 0.5 52"></a-entity>
+<a-entity mixin="cobblestone" position="-16 2.5 52"></a-entity>
+<a-entity mixin="cobblestone" position="-16 0.5 50"></a-entity>
+
+<a-entity mixin="cobblestone" position="12 0.5 52"></a-entity>
+<a-entity mixin="cobblestone" position="12 2.5 52"></a-entity>
+<a-entity mixin="cobblestone" position="12 0.5 50"></a-entity>
+
+<a-entity mixin="cobblestone" position="12 6.5 54"></a-entity>
+<a-entity mixin="cobblestone" position="10 6.5 54"></a-entity>
+<a-entity mixin="cobblestone" position="8 6.5 54"></a-entity>
+<a-entity mixin="cobblestone" position="6 6.5 54"></a-entity>
+<a-entity mixin="cobblestone" position="4 6.5 54"></a-entity>
+<a-entity mixin="cobblestone" position="2 6.5 54"></a-entity>
+<a-entity mixin="cobblestone" position="0 6.5 54"></a-entity>
+<a-entity mixin="cobblestone" position="-2 6.5 54"></a-entity>
+<a-entity mixin="cobblestone" position="-4 6.5 54"></a-entity>
+<a-entity mixin="cobblestone" position="-6 6.5 54"></a-entity>
+<a-entity mixin="cobblestone" position="-8 6.5 54"></a-entity>
+<a-entity mixin="cobblestone" position="-10 6.5 54"></a-entity>
+<a-entity mixin="cobblestone" position="-12 6.5 54"></a-entity>
+<a-entity mixin="cobblestone" position="-14 6.5 54"></a-entity>
+<a-entity mixin="cobblestone" position="-16 6.5 54"></a-entity>
+
+<a-entity mixin="sand" position="-14 0.5 56"></a-entity>
+<a-entity mixin="sand" position="-14 2.5 56"></a-entity>
+<a-entity mixin="sand" position="-14 4.5 56"></a-entity>
+<a-entity mixin="sand" position="-10 0.5 56"></a-entity>
+<a-entity mixin="sand" position="-10 2.5 56"></a-entity>
+<a-entity mixin="sand" position="-10 4.5 56"></a-entity>
+<a-entity mixin="sand" position="-6 0.5 56"></a-entity>
+<a-entity mixin="sand" position="-6 2.5 56"></a-entity>
+<a-entity mixin="sand" position="-6 4.5 56"></a-entity>
+
+<a-entity mixin="sand" position="-2 0.5 56"></a-entity>
+<a-entity mixin="sand" position="-2 2.5 56"></a-entity>
+<a-entity mixin="sand" position="-2 4.5 56"></a-entity>
+<a-entity mixin="sand" position="2 0.5 56"></a-entity>
+<a-entity mixin="sand" position="2 2.5 56"></a-entity>
+<a-entity mixin="sand" position="2 4.5 56"></a-entity>
+<a-entity mixin="sand" position="6 0.5 56"></a-entity>
+<a-entity mixin="sand" position="6 2.5 56"></a-entity>
+<a-entity mixin="sand" position="6 4.5 56"></a-entity>
+<a-entity mixin="sand" position="10 0.5 56"></a-entity>
+<a-entity mixin="sand" position="10 2.5 56"></a-entity>
+<a-entity mixin="sand" position="10 4.5 56"></a-entity>
+
+<!-- Fencing -->
+<a-entity geometry="primitive: plane; height: 1; width: 15" position="-11.5 0 -3" material="shader: standard; transparent: true; side: double; src: url(https://cdn.glitch.com/85e614c3-8c59-4940-a1cf-44d38e346d3f%2Ffencing.png?1527599186808); repeat: 5 1" ></a-entity>
+<a-entity geometry="primitive: plane; height: 1; width: 20" position="9 0 -3" material="shader: standard; transparent: true; side: double; src: url(https://cdn.glitch.com/85e614c3-8c59-4940-a1cf-44d38e346d3f%2Ffencing.png?1527599186808); repeat: 7 1" ></a-entity>
+
+<!-- Fence Posts -->
+<a-entity mixin="post" position="-6 2.5 -10"></a-entity>
+<a-entity mixin="post" position="-2 2.5 -10"></a-entity>
+<a-entity mixin="post" position="-6 0.5 -10"></a-entity>
+<a-entity mixin="post" position="-2 0.5 -10"></a-entity>
+
+<!-- Other -->
+<a-entity mixin="post" position="14 0.5 12"></a-entity>
+<a-entity mixin="plank" position="6 0.5 12"></a-entity>
+<a-entity mixin="log" position="2 0.5 12"></a-entity>
+<a-entity mixin="sand" position="-2 0.5 12"></a-entity>
+<a-entity mixin="cobblestone" position="-6 0.5 12"></a-entity>
+<a-entity mixin="leaves" position="-14 0.5 12"></a-entity>
+<a-entity mixin="box" position="-10 0.5 12" material="src: url(https://cdn.glitch.com/85e614c3-8c59-4940-a1cf-44d38e346d3f%2Fdirt.jpg?1527599185825)"></a-entity>
+<a-entity mixin="box" position="10 0.5 12" material="src: url(https://cdn.glitch.com/85e614c3-8c59-4940-a1cf-44d38e346d3f%2Fdiamond.png?1527599184469)"></a-entity>
+
+<a-entity geometry=" primitive: plane; height: 2; width: 2" position="5 0.5 -2" material="shader: standard; transparent: true; side: double; src: url(https://cdn.glitch.com/85e614c3-8c59-4940-a1cf-44d38e346d3f%2Fsign.png?1527599184948)"></a-entity>
+<a-entity geometry=" primitive: plane; height: 2; width: 2" position="6 0.5 -19" material="shader: standard; transparent: true; side: double; src: url(https://cdn.glitch.com/85e614c3-8c59-4940-a1cf-44d38e346d3f%2Fsword.png?1527599185141)"></a-entity>
+<a-entity geometry=" primitive: plane; height: 3; width: 2" position="-20 1 -20" material="shader: standard; transparent: true; side: double; src: url(https://cdn.glitch.com/85e614c3-8c59-4940-a1cf-44d38e346d3f%2Fcreeper.png?1527599163859)"></a-entity>
+<a-entity geometry=" primitive: plane; height: 1.5; width: 1.5" position="0 0.3 -6" material="shader: standard; transparent: true; side: double; src: url(https://cdn.glitch.com/85e614c3-8c59-4940-a1cf-44d38e346d3f%2Fpig.png?1527599185090)"></a-entity>
+<a-entity geometry=" primitive: plane; height: 4; width: 2" position="-4 1.5 -12" material="shader: standard; transparent: true; side: double; src: url(https://cdn.glitch.com/85e614c3-8c59-4940-a1cf-44d38e346d3f%2Fdoor.png?1527599186392)"></a-entity>
+<!--
+<a-entity id="ground" class="block" geometry="primitive: plane; height: 500; width: 500" position="0 -0.5 0" rotation="-90 0 0"  material="shader: flat; side:double; src: url(https://cdn.glitch.com/85e614c3-8c59-4940-a1cf-44d38e346d3f%2Fgrass.png?1527599189113); repeat: 300 300"></a-entity>
+-->
+<a-entity id="ground" class="floor ground" geometry="primitive: box; depth:500; height: 0.5; width: 500" position="0 -0.75 0" rotation="0 0 0"  material="shader: flat; side:double; src: url(https://cdn.glitch.com/85e614c3-8c59-4940-a1cf-44d38e346d3f%2Fgrass.png?1527599189113); repeat: 300 300"></a-entity>
+
+      <!-- Lighting and background -->
+      <a-sky color="#a9c8e3"></a-sky>
+    </a-scene>
+<script>
+var ws = io.connect();
+var pos = JSON.parse(JSON.stringify(document.querySelector("#rig").getAttribute("position")));
+var rot = JSON.parse(JSON.stringify(document.querySelector("#camera").getAttribute("rotation")));
+
+var cameraUuid = Math.floor(Math.random() * 1000000, 0);
+
+ws.on("connected", function(name) {});
+//ws.on("message", function(data) { moveObj(data);});
+ws.on("disconnect", function() {});
+
+ws.on("player", function(event){
+    
+    var objBody = document.getElementsByTagName("a-scene").item(0);
+    
+    //dataをパースする
+    var data = JSON.parse(event);
+  console.log(data)
+    
+    if (data.type == "defect") {
+        var deleteTarget = document.getElementById(data.cameraid);
+        objBody.removeChild(deleteTarget);
+        return;
+    }
+
+    //自分のオブジェクト以外であること確認する（ないとは思うが）ｋ
+    if (data.cameraId == blockdata.userid) {
+        return;
+    }
+    
+    //オブジェクトを探してなければ作成する。
+//    var targetElem = document.querySelector("#"+data.cameraId);
+    var entity = document.getElementById(data.cameraId);
+    if (entity == null) {
+        console.log("create new creeper");
+        entity = document.createElement("a-entity");
+        entity.setAttribute("id", data.cameraId);
+        entity.setAttribute("geometry",
+            {
+                "primitive": "plane",
+                "height": 2.5,
+                "width": 1.5,
+                "position": data.position
+            }
+        );
+        entity.setAttribute("material",
+            {
+                "shader": "standard",
+                "transparent": true,
+                "side": "double",
+                "src": "url(https://cdn.glitch.com/85e614c3-8c59-4940-a1cf-44d38e346d3f%2Fcreeper.png?1527599163859)"
+            }
+        );
+        objBody.appendChild(entity);
+    }
+
+    //オブジェクトのpos、rot設をを行う。
+    entity.setAttribute("position", 
+        {
+            "x": data.position.x,
+            "y": data.position.y + 0.75,
+            "z": data.position.z
+        });
+    entity.setAttribute("rotation",
+        {
+            "x": 0,
+            "y": data.rotation.y,
+            "z": 0
+        });
+    
+});
+
+ws.on("greeting", function(otherUserUuid) {
+  if (otherUserUuid == blockdata.userid) {
+    console.log("same userid");
+    return;
+  }
+  console.log("joined by "+otherUserUuid);
+});
+
+ws.on("makeblock", function(data){
+  let blockdata = JSON.parse(data);
+  if (blockdata["userUuid"] === blockdata.userid) {
+    console.log("same userUuid");
+    return;
+  }
+
+  if (blockdata.method == "create") {
+    console.log("makeblock");
+    let block = blockdata.block;
+    if (block) {
+      let box = document.createElement("a-box");
+      box.id = blockdata.blockUuid;
+      box.className = block.class;
+      box.setAttribute("mixin", block.mixin);
+      box.setAttribute("position", block.position);
+      blockList.appendChild(box);
+    }
+  } else if (blockdata.method == "delete") {
+    console.log("deleteblock");
+    let blockdata = JSON.parse(data);
+    let block = document.getElementById(blockdata.blockUuid);
+    if (block) {
+      block.parentNode.removeChild(block);
+    }
+  }        
+
+});
+
+  
+window.onbeforeunload = function() {
+    ws.emit("defect", JSON.stringify({
+        type: 'defect',
+        cameraId: blockdata.userid
+    }));
+};
+  
+window.onload = function() {
+  console.log ("onload");
+  
+  hyoji();
+
+  blockdata.marker = document.getElementById("marker");
+  blockdata.offsetY = marker.getAttribute("scale").y/2;
+
+}
+
+function hyoji() {
+
+  var rig = document.querySelector("#rig");
+  var camera = document.querySelector("#camera");
+  var new_pos = JSON.parse(JSON.stringify(rig.getAttribute("position")));
+  var new_rot = JSON.parse(JSON.stringify(camera.getAttribute("rotation")));
+  if ((pos.x != new_pos.x) || (pos.y != new_pos.y) || (pos.z != new_pos.z) || (rot.y != new_rot.y)) {
+    ws.emit("player", JSON.stringify({
+        type: 'move',
+        cameraId: blockdata.userid,
+        position: new_pos,
+        rotation: new_rot
+    }));
+    pos = new_pos;
+    rot = new_rot;
+  }
+
+  setTimeout("hyoji()", 100);
+};
+
+ws.emit("connection");
+  
+</script>
+ </body>
+</html>
