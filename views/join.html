@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Welcome to minecraft world!</title>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <script src="https://code.jquery.com/jquery-3.3.1.min.js"></script>
+
+    <script>
+      function newWorld(event) {
+        $.getJSON("/id", function (json) {
+          var worldid = json.id;
+          console.log("id:" + worldid);
+          let url = "https://" + location.hostname + "/?worldid=" + worldid;
+          console.log(url);
+          window.location.href = url;
+        });
+      }
+
+      function joinWorld(event) {
+        let worldid = document.querySelector("#worldid").value;
+        let url = "https://" + location.hostname + "/?worldid=" + worldid;
+        console.log(url);
+        window.location.href = url;
+      }
+    </script>
+  </head>
+  <body>
+    <input id="newworld" type="button" value="New World" onclick="newWorld();"> <br>
+    <input id="joinworld" type="button" value="Join World" onclick="joinWorld();">
+    <input id="worldid" type="text" value="" placeholder="WorldIDは8桁英数字です。">
+  </body>
+</html>
